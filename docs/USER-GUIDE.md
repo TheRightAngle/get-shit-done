@@ -15,6 +15,21 @@ A detailed reference for workflows, troubleshooting, and configuration. For quic
 
 ---
 
+## Runtime Command Prefixes
+
+GSD installs with runtime-native command syntax:
+
+- Claude Code / Gemini: `/gsd:<command>`
+- OpenCode: `/gsd-<command>`
+- Codex: `gsd-<command>` skills
+
+Examples:
+- Claude/Gemini: `/gsd:help`
+- OpenCode: `/gsd-help`
+- Codex: ask Codex to use the `gsd-help` skill
+
+---
+
 ## Workflow Diagrams
 
 ### Full Project Lifecycle

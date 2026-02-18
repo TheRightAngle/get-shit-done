@@ -41,6 +41,12 @@ Update `model_profile` field:
 ```
 
 Write updated config back to `.planning/config.json`.
+
+Then sync Codex role configs to this profile (no-op if Codex roles are not installed):
+
+```bash
+node ~/.claude/get-shit-done/bin/gsd-tools.cjs codex sync-profile
+```
 </step>
 
 <step name="confirm">

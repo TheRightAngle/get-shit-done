@@ -22,6 +22,7 @@
  *   list-todos [area]                  Count and enumerate pending todos
  *   verify-path-exists <path>          Check file/directory existence
  *   config-ensure-section              Initialize .planning/config.json
+ *   codex sync-profile                 Sync Codex role configs from model_profile
  *   history-digest                     Aggregate all SUMMARY.md data
  *   summary-extract <path> [--fields]  Extract structured data from SUMMARY.md
  *   state-snapshot                     Structured parse of STATE.md
@@ -125,6 +126,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execSync } = require('child_process');
 
 // ─── Model Profile Table ─────────────────────────────────────────────────────
@@ -730,6 +732,74 @@ function cmdConfigGet(cwd, keyPath, raw) {
   }
 
   output(current, raw, String(current));
+}
+
+function resolveCodexHome(cwd = process.cwd()) {
+  const configured = process.env.CODEX_HOME;
+  if (!configured) {
+    const localCodexHome = path.join(cwd, '.codex');
+    if (fs.existsSync(localCodexHome)) return localCodexHome;
+    return path.join(os.homedir(), '.codex');
+  }
+  if (configured.startsWith('~/')) return path.join(os.homedir(), configured.slice(2));
+  return configured;
+}
+
+function codexReasoningForProfile(profile) {
+  if (profile === 'quality') return { effort: 'high', summary: 'detailed' };
+  if (profile === 'budget') return { effort: 'low', summary: 'auto' };
+  return { effort: 'medium', summary: 'auto' };
+}
+
+function upsertTomlStringField(content, key, value) {
+  const line = `${key} = "${value}"`;
+  const pattern = new RegExp(`^${key}\\s*=\\s*".*"\\s*$`, 'm');
+  if (pattern.test(content)) {
+    return content.replace(pattern, line);
+  }
+
+  const trimmed = content.trimEnd();
+  if (trimmed.length === 0) return `${line}\n`;
+  return `${trimmed}\n${line}\n`;
+}
+
+function cmdCodexSyncProfile(cwd, raw) {
+  const profile = loadConfig(cwd).model_profile || 'balanced';
+  const { effort, summary } = codexReasoningForProfile(profile);
+  const codexHome = resolveCodexHome(cwd);
+  const rolesDir = path.join(codexHome, 'get-shit-done', 'codex', 'roles');
+
+  if (!fs.existsSync(rolesDir)) {
+    output({
+      synced: false,
+      reason: 'roles_not_found',
+      profile,
+      roles_dir: rolesDir,
+      updated_files: 0,
+    }, raw, 'false');
+    return;
+  }
+
+  const roleFiles = fs.readdirSync(rolesDir)
+    .filter(file => file.startsWith('gsd-') && file.endsWith('.toml'))
+    .sort();
+
+  for (const file of roleFiles) {
+    const fullPath = path.join(rolesDir, file);
+    const original = fs.readFileSync(fullPath, 'utf-8');
+    let updated = upsertTomlStringField(original, 'model_reasoning_effort', effort);
+    updated = upsertTomlStringField(updated, 'model_reasoning_summary', summary);
+    fs.writeFileSync(fullPath, updated, 'utf-8');
+  }
+
+  output({
+    synced: true,
+    profile,
+    reasoning_effort: effort,
+    reasoning_summary: summary,
+    roles_dir: rolesDir,
+    updated_files: roleFiles.length,
+  }, raw, String(roleFiles.length));
 }
 
 function cmdHistoryDigest(cwd, raw) {
@@ -4919,7 +4989,7 @@ async function main() {
   const cwd = process.cwd();
 
   if (!command) {
-    error('Usage: gsd-tools <command> [args] [--raw]\nCommands: state, resolve-model, find-phase, commit, verify-summary, verify, frontmatter, template, generate-slug, current-timestamp, list-todos, verify-path-exists, config-ensure-section, init');
+    error('Usage: gsd-tools <command> [args] [--raw]\nCommands: state, resolve-model, find-phase, commit, verify-summary, verify, frontmatter, template, generate-slug, current-timestamp, list-todos, verify-path-exists, config-ensure-section, codex, init');
   }
 
   switch (command) {
@@ -5112,6 +5182,16 @@ async function main() {
 
     case 'config-get': {
       cmdConfigGet(cwd, args[1], raw);
+      break;
+    }
+
+    case 'codex': {
+      const subcommand = args[1];
+      if (subcommand === 'sync-profile') {
+        cmdCodexSyncProfile(cwd, raw);
+      } else {
+        error('Unknown codex subcommand. Available: sync-profile');
+      }
       break;
     }
 

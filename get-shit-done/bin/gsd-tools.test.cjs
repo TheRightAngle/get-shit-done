@@ -11,10 +11,11 @@ const { execSync } = require('child_process');
 const TOOLS_PATH = path.join(__dirname, 'gsd-tools.cjs');
 
 // Helper to run gsd-tools command
-function runGsdTools(args, cwd = process.cwd()) {
+function runGsdTools(args, cwd = process.cwd(), envOverrides = {}) {
   try {
     const result = execSync(`node "${TOOLS_PATH}" ${args}`, {
       cwd,
+      env: { ...process.env, ...envOverrides },
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -2342,5 +2343,85 @@ describe('scaffold command', () => {
     const output = JSON.parse(result.output);
     assert.strictEqual(output.created, false, 'should not overwrite');
     assert.strictEqual(output.reason, 'already_exists');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// codex sync-profile command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('codex sync-profile command', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = createTempProject();
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test('updates installed codex role configs from model_profile', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({ model_profile: 'budget' }, null, 2)
+    );
+
+    const codexHome = path.join(tmpDir, '.codex-home');
+    const rolesDir = path.join(codexHome, 'get-shit-done', 'codex', 'roles');
+    fs.mkdirSync(rolesDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(rolesDir, 'gsd-planner.toml'),
+      `model = "gpt-5"\nmodel_reasoning_effort = "high"\nmodel_reasoning_summary = "detailed"\n`
+    );
+    fs.writeFileSync(
+      path.join(rolesDir, 'gsd-executor.toml'),
+      `model_reasoning_effort = "high"\n`
+    );
+
+    const result = runGsdTools('codex sync-profile', tmpDir, { CODEX_HOME: codexHome });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.synced, true);
+    assert.strictEqual(output.profile, 'budget');
+    assert.strictEqual(output.reasoning_effort, 'low');
+    assert.strictEqual(output.updated_files, 2);
+
+    const planner = fs.readFileSync(path.join(rolesDir, 'gsd-planner.toml'), 'utf-8');
+    const executor = fs.readFileSync(path.join(rolesDir, 'gsd-executor.toml'), 'utf-8');
+    assert.ok(planner.includes('model = "gpt-5"'), 'should preserve existing model override');
+    assert.ok(planner.includes('model_reasoning_effort = "low"'), 'planner effort should be low');
+    assert.ok(planner.includes('model_reasoning_summary = "auto"'), 'planner summary should be auto');
+    assert.ok(executor.includes('model_reasoning_effort = "low"'), 'executor effort should be low');
+    assert.ok(executor.includes('model_reasoning_summary = "auto"'), 'executor summary should be added');
+  });
+
+  test('uses local project .codex roles when CODEX_HOME is not set', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({ model_profile: 'quality' }, null, 2)
+    );
+
+    const rolesDir = path.join(tmpDir, '.codex', 'get-shit-done', 'codex', 'roles');
+    fs.mkdirSync(rolesDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(rolesDir, 'gsd-verifier.toml'),
+      `model_reasoning_effort = "medium"\nmodel_reasoning_summary = "auto"\n`
+    );
+
+    const result = runGsdTools('codex sync-profile', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.synced, true);
+    assert.strictEqual(output.profile, 'quality');
+    assert.strictEqual(output.reasoning_effort, 'high');
+    assert.strictEqual(output.updated_files, 1);
+
+    const verifier = fs.readFileSync(path.join(rolesDir, 'gsd-verifier.toml'), 'utf-8');
+    assert.ok(verifier.includes('model_reasoning_effort = "high"'));
+    assert.ok(verifier.includes('model_reasoning_summary = "detailed"'));
   });
 });
